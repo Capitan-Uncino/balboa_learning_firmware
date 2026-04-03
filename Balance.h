@@ -5,7 +5,6 @@
 #include <Balboa32U4.h>
 #include <Arduino.h>
 
-
 const float UPDATE_TIME_MS = 10.0;  // [ms]
 const float TICKS_RADIAN = 161.0;   // 12*51.45*41/25
 const float BITS = 29000.0;         //±32768.0-> 2**15
@@ -16,6 +15,10 @@ const int32_t STOP_BALANCING_ANGLE = 60;     //[degrees]
 const int16_t DISTANCE_DIFF_RESPONSE = 80;
 const uint8_t CALIBRATION_ITERATIONS = 100;  // # measurements to calibrate gyro
 
+extern float k1;
+extern float k2;
+extern float k3;
+extern float k4;
 
 extern LSM6 imu;
 extern Balboa32U4Motors motors;
@@ -35,4 +38,6 @@ void integrateEncoders();
 void avoidOscillations();
 void balanceUpdateSensors();
 void balanceResetEncoders();
-float run_policy(float phi, float theta, float dphi, float dtheta);
+float run_policy_nn();
+float run_policy_raspberry();
+

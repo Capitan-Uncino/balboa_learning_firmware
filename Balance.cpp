@@ -22,6 +22,23 @@ float ref;
 int32_t startBalancingTime;
 int32_t oscillationTime;
 
+float last_noise = 0;
+const float theta_ou = 0.15; // How fast it returns to zero
+const float sigma_ou = 20.0; // The "power" of the noise 
+
+
+
+float generate_exploration_noise() {
+    // Standard Normal Noise (simplified)
+    float epsilon = (float(random(-100, 100)) / 100.0);
+    
+    // OU Process formula: dx = theta * (-x) * dt + sigma * dW
+    // We assume dt = 0.01 (100Hz)
+    float dx = theta_ou * (-last_noise) * 0.01 + sigma_ou * epsilon * sqrt(0.01);
+    last_noise += dx;
+    
+    return last_noise;
+}
 
 void balanceSetup()
 {
@@ -167,39 +184,15 @@ void balance()
   theta *= 0.999;
   
   float ts = 0 + param;
-  // 1. Get normalized action [-1.0 to 1.0]
-  float nn_action = run_policy(phi, theta, phiDot, thetaDot);
+  float u = run_policy_raspberry();
 
-  // 2. Handle state overrides
   if (ts == 1.0 || ts == 2.0) {
-    nn_action = 0.0;          
+    u = 0.0;          
   }
 
-  // 3. Map to maximum base effort (1.0 = 400 PWM)
-  float base_pwm = nn_action * 400.0;
-
-  // 4. Battery Sag Compensation (Targeting 7.2V Nominal)
-  float actual_voltage = readBatteryMillivolts() / 1000.0;
-  
-  // SAFETY: If old batteries sag too hard, prevent a division-by-near-zero explosion
-  if (actual_voltage < 5.0) actual_voltage = 5.0; 
-
-  // Scale the PWM. If battery is at 6.0V, it boosts the PWM to simulate 7.2V.
-  float motorSpeed = (7.2 / actual_voltage) * base_pwm;
-
-  // 6. Hard constraint to the motor driver's physical limits
-  if (motorSpeed > 400.0) motorSpeed = 400.0;
-  if (motorSpeed < -400.0) motorSpeed = -400.0;
-  
-  // (Optional integer cast if your motor driver function strictly requires int16_t)
-  // int16_t finalSpeed = (int16_t)motorSpeed;
-
-  avoidOscillations();
-
-
   motors.setSpeeds(
-    motorSpeed - phiDif * DISTANCE_DIFF_RESPONSE,
-    motorSpeed + phiDif * DISTANCE_DIFF_RESPONSE);
+    u - phiDif * DISTANCE_DIFF_RESPONSE,
+    u + phiDif * DISTANCE_DIFF_RESPONSE);
 
   // Print all parameters on Serial Port
   Serial.print(millis());
@@ -238,8 +231,8 @@ void avoidOscillations(){
 }
 
 
-float run_policy(float phi, float theta, float dphi, float dtheta) {
-    float input[4] = {phi, theta, dphi, dtheta};
+float run_policy_nn() {
+    float input[4] = {phi, theta, phiDot, thetaDot};
     float layer1[16];
     float layer2[16];
     
@@ -268,8 +261,68 @@ float run_policy(float phi, float theta, float dphi, float dtheta) {
     }
     
     if (raw_action > 1.0) raw_action = 1.0;
-    if (raw_action < -1.0) raw_action = -1.0;
+    if (raw_action < -1.0) raw_action = -1.0; 
+
+    // Map to maximum base effort (1.0 = 400 PWM)
+    float base_pwm = raw_action * 400.0;
+
+    // 4. Battery Sag Compensation (Targeting 7.2V Nominal)
+    float actual_voltage = readBatteryMillivolts() / 1000.0;
     
-    return raw_action; 
+    // SAFETY: If old batteries sag too hard, prevent a division-by-near-zero explosion
+    if (actual_voltage < 5.0) actual_voltage = 5.0; 
+
+    // Scale the PWM. If battery is at 6.0V, it boosts the PWM to simulate 7.2V.
+    float motorSpeed = (7.2 / actual_voltage) * base_pwm;
+
+    // 6. Hard constraint to the motor driver's physical limits
+    if (motorSpeed > 400.0) motorSpeed = 400.0;
+    if (motorSpeed < -400.0) motorSpeed = -400.0;
+    
+    return motorSpeed; 
+} 
+
+
+float run_policy_raspberry() {
+  // 1. NON-BLOCKING RX: Check if the Pi sent new parameters
+  // 4 floats * 4 bytes each = 16 bytes
+  if (Serial1.available() >= 16) {
+    Serial1.readBytes((char*)&k1, 4);
+    Serial1.readBytes((char*)&k2, 4);
+    Serial1.readBytes((char*)&k3, 4);
+    Serial1.readBytes((char*)&k4, 4);
+    
+    // Clear any leftover garbage to stay synced
+    while(Serial1.available() > 0) {
+      Serial1.read();
+    }
+  }
+
+  // 2. Calculate control effort: u = -Kx
+  float u_raw = k1 * phi + 
+                k2 * phiDot + 
+                k3 * theta + 
+                k4 * thetaDot; 
+
+  float noise = generate_exploration_noise();
+  float u_noisy = u_raw + noise;
+
+  // 3. FAST TX: Send state and action back to Pi
+  // Pack the 5 variables into an array (20 bytes total) and write it directly
+  float telemetry[5] = {phi, phiDot, theta, thetaDot, u_noisy};
+  Serial1.write((uint8_t*)telemetry, sizeof(telemetry));
+
+  // 4. Calculate physical actions
+  float u_physical = u_noisy;
+  float offset = 0.45; //WARNING MORE MAGIC!
+  if (phiDot > 0) u_physical = u_noisy + offset; 
+  else            u_physical = u_noisy - offset; 
+  
+  motorSpeed = 400 / (readBatteryMillivolts() / 1000.0) * u_physical; 
+
+  avoidOscillations();
+
+  return motorSpeed;
 }
+
 
