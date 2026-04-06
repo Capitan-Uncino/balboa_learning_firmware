@@ -38,6 +38,8 @@ void integrateEncoders();
 void avoidOscillations();
 void balanceUpdateSensors();
 void balanceResetEncoders();
-float run_policy_nn();
+float run_policy_nn(); 
+float run_policy_nn_quatized(); 
+float run_policy_nn_q10();
 float run_policy_raspberry();
 
