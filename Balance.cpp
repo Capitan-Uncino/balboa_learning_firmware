@@ -23,18 +23,28 @@ int32_t startBalancingTime;
 int32_t oscillationTime;
 
 float last_noise = 0;
-const float theta_ou = 0.15; // How fast it returns to zero
-const float sigma_ou = 20.0; // The "power" of the noise 
+const float theta_ou = 0.30; // How fast it returns to zero
+const float sigma_ou = 0.80; // The "power" of the noise 
 
+float generate_gaussian() {
+    // Generate two uniform random variables between 0 and 1
+    // We start u1 at 1 to strictly avoid log(0) which yields negative infinity
+    float u1 = (float)random(1, 10000) / 10000.0; 
+    float u2 = (float)random(0, 10000) / 10000.0;
 
+    // Box-Muller transform calculation
+    float z0 = sqrt(-2.0 * log(u1)) * cos(2.0 * PI * u2);
+    
+    return z0;
+}
 
 float generate_exploration_noise() {
-    // Standard Normal Noise (simplified)
-    float epsilon = (float(random(-100, 100)) / 100.0);
+    // 1. Get the true Gaussian noise
+    float epsilon = generate_gaussian();
     
-    // OU Process formula: dx = theta * (-x) * dt + sigma * dW
-    // We assume dt = 0.01 (100Hz)
-    float dx = theta_ou * (-last_noise) * 0.01 + sigma_ou * epsilon * sqrt(0.01);
+    // 2. OU Process formula: dx = theta * (-x) * dt + sigma * dW
+    // dt = 0.01, and sqrt(dt) = 0.1
+    float dx = theta_ou * (-last_noise) * 0.01 + sigma_ou * epsilon * 0.1;
     last_noise += dx;
     
     return last_noise;
