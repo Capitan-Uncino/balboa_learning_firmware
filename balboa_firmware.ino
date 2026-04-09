@@ -6,18 +6,13 @@ Balboa32U4ButtonA buttonA;
 Balboa32U4ButtonB buttonB;
 Balboa32U4ButtonC buttonC;
 
-float k1 = 0.0;
-float k2 = 0.0;
-float k3 = 0.0;
-float k4 = 0.0;
 
 // Usefull variable
 float param;
 
-void setup()
-{
-  // Initialize UART connection to the Raspberry Pi at 115200 baud
-  Serial1.begin(115200);
+void setup() {
+  // Initialize the Pololu I2C Slave library with I2C address 8
+  piSlave.init(8);
 
   // Uncomment these lines if your motors are reversed.
   // motors.flipLeftMotor(true);
@@ -27,15 +22,18 @@ void setup()
   randomSeed(analogRead(0));
   balanceSetup(); 
   
-  // Initialize parameters
-  k1 = 0.0;
-  k2 = 0.0;
-  k3 = 0.0;
-  k4 = 0.0;
+  // Initialize parameters directly inside the shared I2C buffer.
+  // (Notice I named them explicitly so the math below is impossible to mix up)
+  piSlave.buffer.k_phi      = 0.18257419;
+  piSlave.buffer.k_phidot   = 0.09852314;
+  piSlave.buffer.k_theta    = 4.41295298;
+  piSlave.buffer.k_thetadot = 0.44153694;
 }
 
 void loop()
 { 
+    // 1. Let the library handle any pending background I2C tasks
+  piSlave.updateBuffer();
   balanceUpdate();
   if (buttonA.getSingleDebouncedPress())
   {

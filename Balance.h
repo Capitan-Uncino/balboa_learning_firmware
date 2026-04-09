@@ -4,6 +4,7 @@
 #include <LSM6.h>
 #include <Balboa32U4.h>
 #include <Arduino.h>
+#include <PololuRPiSlave.h>
 
 const float UPDATE_TIME_MS = 10.0;  // [ms]
 const float TICKS_RADIAN = 161.0;   // 12*51.45*41/25
@@ -15,10 +16,29 @@ const int32_t STOP_BALANCING_ANGLE = 60;     //[degrees]
 const int16_t DISTANCE_DIFF_RESPONSE = 80;
 const uint8_t CALIBRATION_ITERATIONS = 100;  // # measurements to calibrate gyro
 
-extern float k1;
-extern float k2;
-extern float k3;
-extern float k4;
+
+
+// 1. Define the shared memory map between the Pi and the Arduino
+struct RobotData {
+  // ----------------------------------------------------
+  // GAINS (Written by Raspberry Pi) - Starts at Offset 0
+  // ----------------------------------------------------
+  float k_phi;       // Offset 0
+  float k_phidot;    // Offset 4
+  float k_theta;     // Offset 8
+  float k_thetadot;  // Offset 12
+
+  // ----------------------------------------------------
+  // TELEMETRY (Read by Raspberry Pi) - Starts at Offset 16
+  // ----------------------------------------------------
+  float phi;         // Offset 16
+  float phiDot;      // Offset 20
+  float theta;       // Offset 24
+  float thetaDot;    // Offset 28
+  float u_noisy;     // Offset 32
+};
+
+extern PololuRPiSlave<struct RobotData, 0> piSlave;
 
 extern LSM6 imu;
 extern Balboa32U4Motors motors;

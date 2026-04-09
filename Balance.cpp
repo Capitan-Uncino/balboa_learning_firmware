@@ -7,6 +7,8 @@ LSM6 imu;
 Balboa32U4Motors motors;
 Balboa32U4Encoders encoders;
 
+PololuRPiSlave<struct RobotData, 0> piSlave;
+
 int32_t gYZero;
 float phi;
 float phiLeft;
@@ -292,6 +294,7 @@ float run_policy_nn() {
     return motorSpeed; 
 } 
 
+/*
 
 float run_policy_nn_quantized() {
     float input[4] = {phi, theta, phiDot, thetaDot};
@@ -475,38 +478,48 @@ float run_policy_nn_q10() {
     return motorSpeed; 
 }
 
-float run_policy_raspberry() {
-  // 1. NON-BLOCKING RX: Check if the Pi sent new parameters
-  // 4 floats * 4 bytes each = 16 bytes
-  if (Serial1.available() >= 16) {
-    Serial1.readBytes((char*)&k1, 4);
-    Serial1.readBytes((char*)&k2, 4);
-    Serial1.readBytes((char*)&k3, 4);
-    Serial1.readBytes((char*)&k4, 4);
-    
-    // Clear any leftover garbage to stay synced
-    while(Serial1.available() > 0) {
-      Serial1.read();
-    }
-  }
+*/
 
-  // 2. Calculate control effort: u = -Kx
-  float u_raw = k1 * phi + 
-                k2 * phiDot + 
-                k3 * theta + 
-                k4 * thetaDot; 
+float run_policy_raspberry() {
+
+
+  // 2. INPUT THE GAINS (The Safe Copy)
+  // Disable interrupts briefly to copy the gains from the shared Pi buffer 
+  // into local variables. This prevents data tearing.
+  float current_k1, current_k2, current_k3, current_k4;
+  
+  noInterrupts(); 
+  current_k1 = piSlave.buffer.k_phi;
+  current_k3 = piSlave.buffer.k_phidot; // Mapped to match your original logic
+  current_k2 = piSlave.buffer.k_theta;
+  current_k4 = piSlave.buffer.k_thetadot;
+  interrupts(); 
+  // Interrupts are back on! The Pi is free to communicate again.
+
+  // 3. Calculate control effort: u = -Kx
+  float u_raw = current_k1 * phi + 
+                current_k2 * theta + 
+                (current_k3 + 0.19) * phiDot + 
+                current_k4 * thetaDot; 
 
   float noise = generate_exploration_noise();
   float u_noisy = u_raw + noise;
 
-  // 3. FAST TX: Send state and action back to Pi
-  // Pack the 5 variables into an array (20 bytes total) and write it directly
-  float telemetry[5] = {phi, phiDot, theta, thetaDot, u_noisy};
-  Serial1.write((uint8_t*)telemetry, sizeof(telemetry));
+  // 4. FAST TX: Update the shared buffer for the Pi to read
+  // We briefly disable interrupts here too, so the Pi doesn't accidentally
+  // read the telemetry while we are only halfway through updating it.
+  noInterrupts();
+  piSlave.buffer.phi      = phi;
+  piSlave.buffer.phiDot   = phiDot;
+  piSlave.buffer.theta    = theta;
+  piSlave.buffer.thetaDot = thetaDot;
+  piSlave.buffer.u_noisy  = u_noisy;
+  interrupts();
 
-  // 4. Calculate physical actions
+  // 5. Calculate physical actions
   float u_physical = u_noisy;
   float offset = 0.45; //WARNING MORE MAGIC!
+  
   if (phiDot > 0) u_physical = u_noisy + offset; 
   else            u_physical = u_noisy - offset; 
   
