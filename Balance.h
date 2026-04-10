@@ -1,22 +1,22 @@
 #pragma once
 
 #include <stdint.h>
+#include <Wire.h>
 #include <LSM6.h>
 #include <Balboa32U4.h>
 #include <Arduino.h>
-#include <PololuRPiSlave.h>
 
 const float UPDATE_TIME_MS = 10.0;  // [ms]
 const float TICKS_RADIAN = 161.0;   // 12*51.45*41/25
 const float BITS = 29000.0;         //±32768.0-> 2**15
 const float DPS = 1000;
-const float rad2deg = 57.296;        // 180/pi
+const float rad2deg = 57.296;       // 180/pi
 const int32_t START_BALANCING_ANGLE = 5;     //[degrees]
 const int32_t STOP_BALANCING_ANGLE = 60;     //[degrees]
 const int16_t DISTANCE_DIFF_RESPONSE = 80;
-const uint8_t CALIBRATION_ITERATIONS = 100;  // # measurements to calibrate gyro
+const uint8_t CALIBRATION_ITERATIONS = 100;  // # measurements to calibrate gyro 
 
-
+extern bool isBalancingStatus;
 
 // 1. Define the shared memory map between the Pi and the Arduino
 struct RobotData {
@@ -38,7 +38,10 @@ struct RobotData {
   float u_noisy;     // Offset 32
 };
 
-extern PololuRPiSlave<struct RobotData, 0> piSlave;
+// Expose the shared memory map to all files
+extern RobotData piData;
+extern bool isBalancingStatus; 
+extern uint32_t imu_busy_count;
 
 extern LSM6 imu;
 extern Balboa32U4Motors motors;
@@ -48,6 +51,8 @@ extern Balboa32U4ButtonB buttonB;
 extern Balboa32U4ButtonC buttonC;
 
 extern float param;
+
+// Core functions
 void balanceSetup();
 void balanceUpdate();
 void balance();
@@ -61,7 +66,9 @@ void balanceResetEncoders();
 float generate_gaussian();
 float generate_exploration_noise();
 float run_policy_nn(); 
-float run_policy_nn_quatized(); 
-float run_policy_nn_q10();
-float run_policy_raspberry();
+float run_policy_raspberry(); 
+
+// I2C Interrupt Handlers
+void receiveEvent(int howMany);
+void requestEvent();
 
