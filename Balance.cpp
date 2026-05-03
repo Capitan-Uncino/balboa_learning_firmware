@@ -69,6 +69,9 @@ float generate_exploration_noise() {
 void balanceSetup()
 {
 
+  pinMode(SYNC_PIN, OUTPUT);
+  digitalWrite(SYNC_PIN, LOW);
+
 
 
   // 1. Initialize I2C as MASTER first (no address)
@@ -140,7 +143,9 @@ void balanceUpdate()
   if (isBalancingStatus)
   {
     balanceUpdateSensors();
+    digitalWrite(SYNC_PIN, HIGH);
     balance();
+
 
     if (abs(theta) > STOP_BALANCING_ANGLE/rad2deg)
     {
@@ -173,6 +178,8 @@ void balanceUpdate()
       count = 0;
     }
   }
+    delay(3);
+    digitalWrite(SYNC_PIN, LOW);
 }
 
 void balanceUpdateSensors()
@@ -248,21 +255,6 @@ void balance()
     u - phiDif * DISTANCE_DIFF_RESPONSE,
     u + phiDif * DISTANCE_DIFF_RESPONSE);
 
-  Serial.print(millis());
-  Serial.print(","); 
-  Serial.print(phi);
-  Serial.print(","); 
-  Serial.print(theta);
-  Serial.print(","); 
-  Serial.print(phiDot);
-  Serial.print(","); 
-  Serial.print(thetaDot);
-  Serial.print(","); 
-  Serial.print(motorSpeed);
-  Serial.print(","); 
-  Serial.print(ref);
-  Serial.print(","); 
-  Serial.println(ts);   
 }
 
 void avoidOscillations(){

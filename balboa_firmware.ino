@@ -9,9 +9,6 @@ float param;
 
 void setup() {
 
-  pinMode(4, OUTPUT);
-  digitalWrite(4, LOW);
-
   param = 0;
   randomSeed(analogRead(0));
   
@@ -29,10 +26,6 @@ void loop()
 { 
   // No update buffers needed; Wire interrupt handlers manage traffic automatically.
   balanceUpdate();
-
-  digitalWrite(4, HIGH);
-  delayMicroseconds(10); // A tiny pulse is enough
-  digitalWrite(4, LOW);
 
 if (isBalancingStatus) {
     ledGreen(1);

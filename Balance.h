@@ -6,6 +6,8 @@
 #include <Balboa32U4.h>
 #include <Arduino.h>
 
+#define SYNC_PIN 4
+
 const float UPDATE_TIME_MS = 10.0;  // [ms]
 const float TICKS_RADIAN = 161.0;   // 12*51.45*41/25
 const float BITS = 29000.0;         //±32768.0-> 2**15
