@@ -1,12 +1,9 @@
 #pragma once
 
 #include <stdint.h>
-#include <Wire.h>
 #include <LSM6.h>
 #include <Balboa32U4.h>
 #include <Arduino.h>
-
-#define SYNC_PIN 4
 
 const float UPDATE_TIME_MS = 10.0;  // [ms]
 const float TICKS_RADIAN = 161.0;   // 12*51.45*41/25
@@ -20,30 +17,25 @@ const uint8_t CALIBRATION_ITERATIONS = 100;  // # measurements to calibrate gyro
 
 extern bool isBalancingStatus;
 
-// 1. Define the shared memory map between the Pi and the Arduino
+// Define the memory map for PC <-> Arduino communication
 struct RobotData {
-  // ----------------------------------------------------
-  // GAINS (Written by Raspberry Pi) - Starts at Offset 0
-  // ----------------------------------------------------
+  // GAINS (Received from PC)
   float k_phi;       // Offset 0
-  float k_phidot;    // Offset 4
-  float k_theta;     // Offset 8
+  float k_theta;     // Offset 4
+  float k_phidot;    // Offset 8
   float k_thetadot;  // Offset 12
 
-  // ----------------------------------------------------
-  // TELEMETRY (Read by Raspberry Pi) - Starts at Offset 16
-  // ----------------------------------------------------
+  // TELEMETRY (Sent to PC)
   float phi;         // Offset 16
-  float phiDot;      // Offset 20
-  float theta;       // Offset 24
+  float theta;       // Offset 20
+  float phiDot;      // Offset 24
   float thetaDot;    // Offset 28
   float u_noisy;     // Offset 32
 };
 
-// Expose the shared memory map to all files
-extern RobotData piData;
+// Expose the shared memory map
+extern RobotData pcData;
 extern bool isBalancingStatus; 
-extern uint32_t imu_busy_count;
 
 extern LSM6 imu;
 extern Balboa32U4Motors motors;
@@ -68,9 +60,8 @@ void balanceResetEncoders();
 float generate_gaussian();
 float generate_exploration_noise();
 float run_policy_nn(); 
-float run_policy_raspberry(); 
+float run_policy_pc(); 
 
-// I2C Interrupt Handlers
-void receiveEvent(int howMany);
-void requestEvent();
+// Serial handler
+void handleSerial();
 

@@ -1,4 +1,3 @@
-#include <Wire.h>
 #include "Balance.h"
 #include <math.h>
 #include "STEPfile.h"
@@ -7,8 +6,7 @@ LSM6 imu;
 Balboa32U4Motors motors;
 Balboa32U4Encoders encoders;
 
-// Instantiate the shared memory struct
-RobotData piData;
+RobotData pcData;
 
 int32_t gYZero;
 float phi;
@@ -26,28 +24,41 @@ int32_t startBalancingTime;
 int32_t oscillationTime;
 
 float last_noise = 0;
-const float theta_ou = 0.30; // How fast it returns to zero
-const float sigma_ou = 0.80; // The "power" of the noise 
+const float theta_ou = 0.30; 
+const float sigma_ou = 0.10; 
 
-// --- I2C INTERRUPT HANDLERS ---
-
-// Triggered automatically when the Raspberry Pi WRITES gains
-void receiveEvent(int howMany) {
-  // Check if we received the offset byte (1 byte) + 4 floats (16 bytes)
-  if (howMany >= 17) {
-    uint8_t offset = Wire.read();
-    if (offset == 0) {
-       Wire.readBytes((char*)&piData.k_phi, 16);
+// --- SERIAL DATA HANDLER ---
+// Non-blocking state machine to parse incoming binary gains
+void handleSerial() {
+  if (!Serial) return; 
+  
+  static uint8_t state = 0;
+  static uint8_t buffer[16];
+  static uint8_t index = 0;
+  
+  while (Serial.available() > 0) {
+    uint8_t b = Serial.read();
+    switch(state) {
+      // Look for the strict 4-byte header: 0xAA, 0xBB, 0xCC, 0xDD
+      case 0: if (b == 0xAA) state = 1; else state = 0; break;
+      case 1: if (b == 0xBB) state = 2; else state = 0; break;
+      case 2: if (b == 0xCC) state = 3; else state = 0; break;
+      case 3: if (b == 0xDD) { state = 4; index = 0; } else { state = 0; } break;
+      case 4: // Reading 16 bytes of floats
+        buffer[index++] = b;
+        if (index == 16) {
+          float* incoming_gains = (float*)buffer;
+          noInterrupts();
+          pcData.k_phi      = incoming_gains[0];
+          pcData.k_theta    = incoming_gains[1];
+          pcData.k_phidot   = incoming_gains[2];
+          pcData.k_thetadot = incoming_gains[3];
+          interrupts();
+          state = 0; // Reset for next packet
+        }
+        break;
     }
   }
-  // Flush any remaining garbage to keep the bus clean
-  while(Wire.available()) Wire.read();
-}
-
-// Triggered automatically when the Raspberry Pi READS telemetry
-void requestEvent() {
-  // Send the 5 telemetry floats (20 bytes total) starting from phi
-  Wire.write((uint8_t*)&piData.phi, 20);
 }
 
 // --- CORE LOGIC ---
@@ -68,37 +79,17 @@ float generate_exploration_noise() {
 
 void balanceSetup()
 {
-
-  pinMode(SYNC_PIN, OUTPUT);
-  digitalWrite(SYNC_PIN, LOW);
-
-
-
-  // 1. Initialize I2C as MASTER first (no address)
-  // This allows the Arduino to talk to the IMU sensors without 
-  // the Raspberry Pi interfering yet.
   Wire.begin(); 
-  
-  // 2. CRITICAL: Set I2C Timeout (3ms)
-  // If the Pi causes a bus collision, the Arduino will reset its I2C 
-  // hardware instead of hanging the CPU (which kills the USB port).
-  Wire.setWireTimeout(3000, true); 
-  Wire.setClock(400000); 
+  Wire.setClock(400000);
+  Wire.setWireTimeout(3000, true); // Prevents I2C hangs from bricking the USB!
 
-  // 3. Initialize IMU with a Hardware-Error Heartbeat
-  if (!imu.init())
-  {
-    // If the IMU is missing or the bus is stuck, flash RED rapidly
-    while(1) {
-      ledRed(millis() % 100 < 50); 
-    }
+  if (!imu.init()) {
+    while(1) { ledRed(millis() % 100 < 50); }
   }
   
   imu.enableDefault();
   imu.writeReg(LSM6::CTRL2_G, 0b01011000); // 208 Hz, 1000 deg/s
 
-  // 4. Calibrate Gyro (Quiet Period)
-  // We do this BEFORE joining the bus as a slave.
   delay(500);
   int32_t total = 0;
   for (int i = 0; i < CALIBRATION_ITERATIONS; i++)
@@ -109,26 +100,13 @@ void balanceSetup()
   }
   gYZero = total / CALIBRATION_ITERATIONS;
 
-  // 5. JOIN THE BUS AS SLAVE (Address 8)
-  // Only now will the Raspberry Pi be able to "see" the Arduino.
-  Wire.begin(8); 
-  Wire.onReceive(receiveEvent);
-  Wire.onRequest(requestEvent);
-  
-  // Re-apply timeout for Slave mode stability
-  Wire.setWireTimeout(3000, true); 
-
-  // 6. SIGNAL READINESS TO PI
-  // Set the magic number so the Rust code knows we are online but idle.
   noInterrupts();
-  piData.theta = 999.0;
-  piData.phi = 0.0;
-  piData.phiDot = 0.0;
-  piData.thetaDot = 0.0;
-  piData.u_noisy = 0.0;
+  pcData.theta = 999.0;
+  pcData.phi = 0.0;
+  pcData.phiDot = 0.0;
+  pcData.thetaDot = 0.0;
+  pcData.u_noisy = 0.0;
   interrupts();
-  
-  Serial.println("Balance Setup Complete. Slave 08 Online.");
 }
 
 void balanceUpdate()
@@ -143,9 +121,7 @@ void balanceUpdate()
   if (isBalancingStatus)
   {
     balanceUpdateSensors();
-    digitalWrite(SYNC_PIN, HIGH);
     balance();
-
 
     if (abs(theta) > STOP_BALANCING_ANGLE/rad2deg)
     {
@@ -178,8 +154,6 @@ void balanceUpdate()
       count = 0;
     }
   }
-    delay(3);
-    digitalWrite(SYNC_PIN, LOW);
 }
 
 void balanceUpdateSensors()
@@ -216,12 +190,10 @@ void integrateEncoders()
 
 void lyingDown()             
 {
-  if (abs(thetaDot) < 0.05)  
-  {
+  if (abs(thetaDot) < 0.05)  {
     imu.read();
     theta = atan2(imu.a.z, imu.a.x);                                   
-  }
-  else{
+  } else {
     integrateGyro();
   }
 }
@@ -245,7 +217,7 @@ void balance()
   theta *= 0.999;
   
   float ts = 0 + param;
-  float u = run_policy_raspberry();
+  float u = run_policy_pc();
 
   if (ts == 1.0 || ts == 2.0) {
     u = 0.0;          
@@ -254,7 +226,6 @@ void balance()
   motors.setSpeeds(
     u - phiDif * DISTANCE_DIFF_RESPONSE,
     u + phiDif * DISTANCE_DIFF_RESPONSE);
-
 }
 
 void avoidOscillations(){
@@ -315,16 +286,16 @@ float run_policy_nn() {
     return motorSpeed; 
 } 
 
-float run_policy_raspberry() {
-  // 1. INPUT THE GAINS (The Safe Copy)
+float run_policy_pc() {
+  // 1. INPUT THE GAINS 
   float current_k1, current_k2, current_k3, current_k4;
   
   noInterrupts(); 
-  current_k1 = piData.k_phi;
-  current_k3 = piData.k_phidot; 
-  current_k2 = piData.k_theta;
-  current_k4 = piData.k_thetadot;
-  interrupts(); 
+  current_k1 = pcData.k_phi;
+  current_k2 = pcData.k_theta;    
+  current_k3 = pcData.k_phidot;   
+  current_k4 = pcData.k_thetadot;
+  interrupts();
 
   // 2. Calculate control effort
   float u_raw = current_k1 * phi + 
@@ -335,16 +306,25 @@ float run_policy_raspberry() {
   float noise = generate_exploration_noise();
   float u_noisy = u_raw + noise;
 
-  // 3. FAST TX: Update the shared buffer for the Pi
+  // 3. Update the shared buffer
   noInterrupts();
-  piData.phi      = phi;
-  piData.phiDot   = phiDot;
-  piData.theta    = theta;
-  piData.thetaDot = thetaDot;
-  piData.u_noisy  = u_noisy;
+  pcData.phi      = phi;
+  pcData.theta    = theta;     
+  pcData.phiDot   = phiDot;    
+  pcData.thetaDot = thetaDot;
+  pcData.u_noisy  = u_noisy;
   interrupts();
 
-  // 4. Calculate physical actions
+// ========================================================
+  // 4. TX DATA TO COMPUTER OVER USB SERIAL
+  // ========================================================
+  if (Serial && Serial.availableForWrite() >= 24) { // 4 header bytes + 20 data bytes
+    const uint8_t header[4] = {0xDD, 0xCC, 0xBB, 0xAA};
+    Serial.write(header, 4);
+    Serial.write((uint8_t*)&pcData.phi, 20); // Sends the 5 telemetry floats
+  }
+
+  // 5. Calculate physical actions
   float u_physical = u_noisy;
   float offset = 0.45; 
   
@@ -357,4 +337,3 @@ float run_policy_raspberry() {
 
   return motorSpeed;
 }
-
