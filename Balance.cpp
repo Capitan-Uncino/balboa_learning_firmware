@@ -30,16 +30,21 @@ const float sigma_ou = 0.10;
 // --- SERIAL DATA HANDLER ---
 // Non-blocking state machine to parse incoming binary gains
 void handleSerial() {
-  if (!Serial) return; 
+  //if (!Serial) return; 
   
   static uint8_t state = 0;
   static uint8_t buffer[16];
   static uint8_t index = 0;
   
-  while (Serial.available() > 0) {
+  // THE ESCAPE HATCH: Never process more than 32 bytes per tick.
+  // This guarantees the function exits quickly and never starves your 10ms loop!
+  uint8_t bytes_processed = 0;
+  
+  while (Serial.available() > 0 && bytes_processed < 2) {
     uint8_t b = Serial.read();
+    bytes_processed++; // Count every byte we pull from the buffer
+    
     switch(state) {
-      // Look for the strict 4-byte header: 0xAA, 0xBB, 0xCC, 0xDD
       case 0: if (b == 0xAA) state = 1; else state = 0; break;
       case 1: if (b == 0xBB) state = 2; else state = 0; break;
       case 2: if (b == 0xCC) state = 3; else state = 0; break;
@@ -47,18 +52,23 @@ void handleSerial() {
       case 4: // Reading 16 bytes of floats
         buffer[index++] = b;
         if (index == 16) {
-          float* incoming_gains = (float*)buffer;
+          
+          // Use a safe temporary array to prevent memory alignment crashes
+          float incoming_gains[4];
+          memcpy(incoming_gains, buffer, 16); 
+          
           noInterrupts();
           pcData.k_phi      = incoming_gains[0];
           pcData.k_theta    = incoming_gains[1];
           pcData.k_phidot   = incoming_gains[2];
           pcData.k_thetadot = incoming_gains[3];
           interrupts();
+          
           state = 0; // Reset for next packet
         }
         break;
     }
-  }
+  } 
 }
 
 // --- CORE LOGIC ---
@@ -80,7 +90,7 @@ float generate_exploration_noise() {
 void balanceSetup()
 {
   Wire.begin(); 
-  Wire.setClock(400000);
+  Wire.setClock(100000);
   Wire.setWireTimeout(3000, true); // Prevents I2C hangs from bricking the USB!
 
   if (!imu.init()) {
@@ -300,7 +310,7 @@ float run_policy_pc() {
   // 2. Calculate control effort
   float u_raw = current_k1 * phi + 
                 current_k2 * theta + 
-                (current_k3 + 0.19) * phiDot + 
+                (current_k3 ) * phiDot + 
                 current_k4 * thetaDot; 
 
   float noise = generate_exploration_noise();
@@ -318,7 +328,8 @@ float run_policy_pc() {
 // ========================================================
   // 4. TX DATA TO COMPUTER OVER USB SERIAL
   // ========================================================
-  if (Serial && Serial.availableForWrite() >= 24) { // 4 header bytes + 20 data bytes
+  
+  if (Serial.availableForWrite() >= 24) { // 4 header bytes + 20 data bytes
     const uint8_t header[4] = {0xDD, 0xCC, 0xBB, 0xAA};
     Serial.write(header, 4);
     Serial.write((uint8_t*)&pcData.phi, 20); // Sends the 5 telemetry floats

@@ -16,10 +16,20 @@ void setup() {
   balanceSetup(); 
   
   // Default Gains
-  pcData.k_phi      = 0.18257419;
+  pcData.k_phi      = 0.134267;
+  pcData.k_theta    = 2.202209;
+  pcData.k_phidot   = 0.276284;
+  pcData.k_thetadot = 0.687669;
+
+  /*
+  
+    pcData.k_phi      = 0.18257419;
   pcData.k_theta    = 4.41295298;
   pcData.k_phidot   = 0.09852314;
   pcData.k_thetadot = 0.44153694;
+  
+  */
+
 }
 
 void loop()
@@ -29,6 +39,8 @@ void loop()
 
   // Run the 10ms control loop
   balanceUpdate();
+
+ 
 
   if (isBalancingStatus) {
     ledGreen(1);
